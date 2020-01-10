@@ -89,71 +89,34 @@ func createQuickstartTests(quickstartName string) bool {
 
 					applicationName := T.GetApplicationName()
 					owner := T.GetGitOrganisation()
-					jobName := owner + "/" + applicationName + "/master"
 
-					if T.WaitForFirstRelease() {
-						//FIXME Need to wait a little here to ensure that the build has started before asking for the log as the jx create quickstart command returns slightly before the build log is available
-						time.Sleep(30 * time.Second)
-						By(fmt.Sprintf("waiting for the first release of %s", applicationName), func() {
-							T.ThereShouldBeAJobThatCompletesSuccessfully(jobName, helpers.TimeoutBuildCompletes)
-							T.TheApplicationIsRunningInStaging(200)
-						})
-
-						if T.TestPullRequest() {
-							By("performing a pull request on the source and asserting that a preview environment is created", func() {
-								T.CreatePullRequestAndGetPreviewEnvironment(200)
-							})
-						}
-
-						if T.WeShouldTestChatOpsCommands() {
-							gitProvider, err := T.GetGitProvider()
+					if T.WeShouldTestChatOpsCommands() {
+						gitProvider, err := T.GetGitProvider()
+						Expect(err).NotTo(HaveOccurred())
+						By("creating an issue and assigning it to a valid user", func() {
+							issue := &gits.GitIssue{
+								Owner: owner,
+								Repo:  applicationName,
+								Title: "Test the /assign command",
+								Body:  "This tests assigning a user using a ChatOps command",
+							}
+							err = T.CreateIssueAndAssignToUserWithChatOpsCommand(issue, gitProvider)
 							Expect(err).NotTo(HaveOccurred())
-							By("creating an issue and assigning it to a valid user", func() {
-								issue := &gits.GitIssue{
-									Owner: owner,
-									Repo:  applicationName,
-									Title: "Test the /assign command",
-									Body:  "This tests assigning a user using a ChatOps command",
-								}
-								err = T.CreateIssueAndAssignToUserWithChatOpsCommand(issue, gitProvider)
-								Expect(err).NotTo(HaveOccurred())
-							})
-
-							By("attempting to LGTM our own PR", func() {
-								err = T.AttemptToLGTMOwnPR(gitProvider, owner, applicationName)
-								Expect(err).NotTo(HaveOccurred())
-							})
-
-							By("adding a hold label", func() {
-								err = T.AddHoldLabelToPRWithChatOpsCommand(gitProvider, owner, applicationName)
-								Expect(err).NotTo(HaveOccurred())
-							})
-
-							By("adding a WIP label", func() {
-								err = T.AddWIPLabelToPRByUpdatingTitle(gitProvider, owner, applicationName)
-								Expect(err).NotTo(HaveOccurred())
-							})
-						}
-					} else {
-						By(fmt.Sprintf("waiting for the first successful build of master of %s", applicationName), func() {
-							T.ThereShouldBeAJobThatCompletesSuccessfully(jobName, helpers.TimeoutBuildCompletes)
 						})
-					}
 
-					if T.DeleteApplications() {
-						args = []string{"delete", "application", "-b", T.ApplicationName}
-						argsStr := strings.Join(args, " ")
-						By(fmt.Sprintf("calling %s to delete the application", argsStr), func() {
-							T.ExpectJxExecution(T.WorkDir, helpers.TimeoutSessionWait, 0, args...)
+						By("attempting to LGTM our own PR", func() {
+							err = T.AttemptToLGTMOwnPR(gitProvider, owner, applicationName)
+							Expect(err).NotTo(HaveOccurred())
 						})
-					}
 
-					if T.DeleteRepos() {
-						args = []string{"delete", "repo", "-b", "--github", "-o", T.GetGitOrganisation(), "-n", T.ApplicationName}
-						argsStr = strings.Join(args, " ")
+						By("adding a hold label", func() {
+							err = T.AddHoldLabelToPRWithChatOpsCommand(gitProvider, owner, applicationName)
+							Expect(err).NotTo(HaveOccurred())
+						})
 
-						By(fmt.Sprintf("calling %s to delete the repository", os.Args), func() {
-							T.ExpectJxExecution(T.WorkDir, helpers.TimeoutSessionWait, 0, args...)
+						By("adding a WIP label", func() {
+							err = T.AddWIPLabelToPRByUpdatingTitle(gitProvider, owner, applicationName)
+							Expect(err).NotTo(HaveOccurred())
 						})
 					}
 				})
