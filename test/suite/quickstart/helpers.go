@@ -2,11 +2,9 @@ package quickstart
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pkg/errors"
 
