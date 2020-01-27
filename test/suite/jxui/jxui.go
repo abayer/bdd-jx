@@ -63,8 +63,10 @@ func (t *AppTestOptions) UITest() bool {
 			_ = os.Setenv("JX_HOME", jxHome)
 			utils.LogInfo(fmt.Sprintf("Using '%s' as JX_HOME", jxHome))
 
-			By("setting the GitHub token")
-			helpers.SetGitHubToken()
+			if t.NeedToSetGitToken() {
+				By("setting the GitHub token")
+				t.SetGitHubToken()
+			}
 
 			By("setting up a GitHub client")
 			ctx = context.Background()

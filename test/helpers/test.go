@@ -80,7 +80,10 @@ var (
 	TimeoutProwActionWait = utils.GetTimeoutFromEnv("BDD_TIMEOUT_PROW_ACTION_WAIT", 5)
 
 	// EnableChatOpsTests turns on the chatops tests when specified as true
-	EnableChatOpsTests = utils.GetEnv("JX_ENABLE_TEST_CHATOPS_COMMANDS", "false")
+	EnableChatOpsTests = utils.GetEnv("BDD_ENABLE_TEST_CHATOPS_COMMANDS", "false")
+
+	// GitTokenAlreadySet turns off the need to explicitly set a git token
+	GitTokenAlreadySet = utils.GetEnv("BDD_GIT_TOKEN_ALREADY_SET", "false")
 )
 
 // TestOptions is the base testing object
@@ -687,6 +690,11 @@ func (t *TestOptions) WaitForFirstRelease() bool {
 // WeShouldTestChatOpsCommands should we test prow ChatOps commands
 func (t *TestOptions) WeShouldTestChatOpsCommands() bool {
 	return strings.ToLower(EnableChatOpsTests) == "true"
+}
+
+// NeedToSetGitToken do we need to set a git token or can we assume one is already set
+func (t *TestOptions) NeedToSetGitToken() bool {
+	return strings.ToLower(GitTokenAlreadySet) != "true"
 }
 
 // ExpectUrlReturns expects that the given URL returns the given status code within the given time period
