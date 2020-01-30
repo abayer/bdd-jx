@@ -168,6 +168,22 @@ func (t *TestOptions) GetGitProvider() (gits.GitProvider, error) {
 	return gitProvider, nil
 }
 
+// GetSCMClientAndUser returns a go-scm client that uses default credentials stored in the jx-auth-configmap or in ~/.jx/gitAuth.yaml,
+// and the current username
+func (t *TestOptions) GetSCMClient() (*scm.Client, string, error) {
+	provider, err := t.GetGitProvider()
+	if err != nil {
+		return nil, "", err
+	}
+	userAuth := provider.UserAuth()
+
+	scmClient, err := scmFactory.NewClient(provider.Kind(), provider.ServerURL(), userAuth.ApiToken)
+	if err != nil {
+		return nil, "", err
+	}
+	return scmClient, userAuth.Username, nil
+}
+
 // GitProviderURL Gets the current git provider URL
 func (t *TestOptions) GitProviderURL() (string, error) {
 	gitProviderURL := os.Getenv("GIT_PROVIDER_URL")
@@ -735,37 +751,33 @@ func (t *TestOptions) CreateChatOpsCommands(commands []string) error {
 }
 
 // CreateIssueAndAssignToUser creates an issue on the configure git provider and assigns it to a user.
-func (t *TestOptions) CreateIssueAndAssignToUserWithChatOpsCommand(issue *gits.GitIssue, provider gits.GitProvider) error {
-
-	createdIssue, err := provider.CreateIssue(issue.Owner, issue.Repo, issue)
+func (t *TestOptions) CreateIssueAndAssignToUserWithChatOpsCommand(owner string, repo string, username string, issue *scm.IssueInput, client *scm.Client) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
+	createdIssue, _, err := client.Issues.Create(context.Background(), orgAndRepo, issue)
 	if err != nil {
 		return err
 	}
 
-	utils.LogInfof("created issue with number %d\n", *createdIssue.Number)
+	utils.LogInfof("created issue with number %d\n", createdIssue.Number)
 
-	err = provider.CreateIssueComment(
-		issue.Owner,
-		issue.Repo,
-		*createdIssue.Number,
-		fmt.Sprintf("/assign %s", provider.CurrentUsername()),
-	)
+	commentInput := &scm.CommentInput{
+		Body: fmt.Sprintf("/assign %s", username),
+	}
+	_, _, err = client.Issues.CreateComment(context.Background(), orgAndRepo, createdIssue.Number, commentInput)
 	if err != nil {
 		return err
 	}
-	utils.LogInfof("create issue comment on issue %d\n", *createdIssue.Number)
+	utils.LogInfof("create issue comment on issue %d\n", createdIssue.Number)
 
-	createdIssue.Owner = issue.Owner
-	createdIssue.Repo = issue.Repo
-
-	return t.ExpectThatIssueIsAssignedToUser(provider, createdIssue, provider.CurrentUsername())
+	return t.ExpectThatIssueIsAssignedToUser(owner, repo, username, client, createdIssue)
 
 }
 
 // ExpectThatIssueIsAssignedToUser returns an error if
-func (t *TestOptions) ExpectThatIssueIsAssignedToUser(provider gits.GitProvider, issue *gits.GitIssue, username string) error {
+func (t *TestOptions) ExpectThatIssueIsAssignedToUser(owner string, repo string, username string, client *scm.Client, issue *scm.Issue) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
 	f := func() error {
-		fetchedIssue, err := provider.GetIssue(issue.Owner, issue.Repo, *issue.Number)
+		fetchedIssue, _, err := client.Issues.Find(context.Background(), orgAndRepo, issue.Number)
 		if err != nil {
 			return err
 		}
@@ -786,8 +798,9 @@ func (t *TestOptions) ExpectThatIssueIsAssignedToUser(provider gits.GitProvider,
 }
 
 // AttemptToLGTMOwnPR return an error if the /lgtm fails to add the lgtm label to PR
-func (t *TestOptions) AttemptToLGTMOwnPR(provider gits.GitProvider, owner string, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+func (t *TestOptions) AttemptToLGTMOwnPR(client *scm.Client, owner string, repo string) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
+	pullRequests, _, err := client.PullRequests.List(context.Background(), orgAndRepo, scm.PullRequestListOptions{Open: true})
 	if err != nil {
 		return err
 	}
@@ -795,36 +808,31 @@ func (t *TestOptions) AttemptToLGTMOwnPR(provider gits.GitProvider, owner string
 		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
 	}
 
-	err = provider.AddPRComment(pullRequests[0], "/lgtm")
+	originalPullRequest := pullRequests[0]
+	commentInput := &scm.CommentInput{
+		Body: "/lgtm",
+	}
+	_, _, err = client.PullRequests.CreateComment(context.Background(), orgAndRepo, originalPullRequest.Number, commentInput)
 	if err != nil {
 		return err
 	}
 
-	repoStruct := &gits.GitRepository{
-		Name:         repo,
-		Organisation: owner,
-	}
-	pullRequest, err := provider.GetPullRequest(owner, repoStruct, *pullRequests[0].Number)
+	pullRequest, _, err := client.PullRequests.Find(context.Background(), orgAndRepo, originalPullRequest.Number)
 	if err != nil {
 		return err
 	}
 
-	return t.ExpectThatPRHasCommentWithText(provider, pullRequest, "you cannot LGTM your own PR.")
+	return t.ExpectThatPRHasCommentWithText(client, owner, repo, pullRequest, "you cannot LGTM your own PR.")
 }
 
 // ExpectThatPRHasCommentWithText returns an error if the PR does not have a comment with the specified text
-func (t *TestOptions) ExpectThatPRHasCommentWithText(provider gits.GitProvider, pullRequest *gits.GitPullRequest, commentText string) error {
+func (t *TestOptions) ExpectThatPRHasCommentWithText(client *scm.Client, owner string, repo string, pullRequest *scm.PullRequest, commentText string) error {
+	repoString := fmt.Sprintf("%s/%s", owner, repo)
 	f := func() error {
-		userAuth := provider.UserAuth()
-
-		scmClient, err := scmFactory.NewClient(provider.Kind(), provider.ServerURL(), userAuth.ApiToken)
+		comments, _, err := client.PullRequests.ListComments(context.Background(), repoString, pullRequest.Number, scm.ListOptions{})
 		if err != nil {
 			return err
 		}
-
-		repoString := fmt.Sprintf("%s/%s", pullRequest.Owner, pullRequest.Repo)
-		comments, _, err := scmClient.PullRequests.ListComments(context.Background(), repoString, *pullRequest.Number, scm.ListOptions{})
-
 		for _, comment := range comments {
 			if strings.Contains(comment.Body, commentText) {
 				return nil
@@ -837,8 +845,9 @@ func (t *TestOptions) ExpectThatPRHasCommentWithText(provider gits.GitProvider, 
 }
 
 // AddHoldLabelToPRWithChatOpsCommand returns an error of the command fails to add the do-not-merge/hold label
-func (t *TestOptions) AddHoldLabelToPRWithChatOpsCommand(provider gits.GitProvider, owner, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+func (t *TestOptions) AddHoldLabelToPRWithChatOpsCommand(client *scm.Client, owner, repo string) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
+	pullRequests, _, err := client.PullRequests.List(context.Background(), orgAndRepo, scm.PullRequestListOptions{Open: true})
 	if err != nil {
 		return err
 	}
@@ -846,17 +855,22 @@ func (t *TestOptions) AddHoldLabelToPRWithChatOpsCommand(provider gits.GitProvid
 		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
 	}
 
-	err = provider.AddPRComment(pullRequests[0], "/hold")
+	originalPullRequest := pullRequests[0]
+	commentInput := &scm.CommentInput{
+		Body: "/hold",
+	}
+	_, _, err = client.PullRequests.CreateComment(context.Background(), orgAndRepo, originalPullRequest.Number, commentInput)
 	if err != nil {
 		return err
 	}
 
-	return t.ExpectThatPRHasLabel(provider, *pullRequests[0].Number, owner, repo, "do-not-merge/hold")
+	return t.ExpectThatPRHasLabel(client, originalPullRequest.Number, owner, repo, "do-not-merge/hold")
 }
 
 // AddWIPLabelToPRByUpdatingTitle adds the WIP label by adding WIP to a pull request's title
-func (t *TestOptions) AddWIPLabelToPRByUpdatingTitle(provider gits.GitProvider, owner, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+func (t *TestOptions) AddWIPLabelToPRByUpdatingTitle(client *scm.Client, owner, repo string) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
+	pullRequests, _, err := client.PullRequests.List(context.Background(), orgAndRepo, scm.PullRequestListOptions{Open: true})
 	if err != nil {
 		return err
 	}
@@ -864,31 +878,25 @@ func (t *TestOptions) AddWIPLabelToPRByUpdatingTitle(provider gits.GitProvider, 
 		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
 	}
 
-	pullRequest := pullRequests[0]
+	originalPullRequest := pullRequests[0]
 
-	pullRequestArgs := &gits.GitPullRequestArguments{
-		Title: fmt.Sprintf("WIP %s", pullRequest.Title),
-		GitRepository: &gits.GitRepository{
-			Organisation: pullRequest.Owner,
-			Name:         pullRequest.Repo,
-		},
+	prInput := &scm.PullRequestInput{
+		Title: fmt.Sprintf("WIP %s", originalPullRequest.Title),
 	}
-	updatedPullRequest, err := provider.UpdatePullRequest(pullRequestArgs, *pullRequest.Number)
+
+	_, _, err = client.PullRequests.Update(context.Background(), orgAndRepo, originalPullRequest.Number, prInput)
 	if err != nil {
 		return err
 	}
 
-	return t.ExpectThatPRHasLabel(provider, *updatedPullRequest.Number, owner, repo, "do-not-merge/work-in-progress")
+	return t.ExpectThatPRHasLabel(client, originalPullRequest.Number, owner, repo, "do-not-merge/work-in-progress")
 }
 
 // ExpectThatPRHasLabel returns an error if the PR does not have the specified label
-func (t *TestOptions) ExpectThatPRHasLabel(provider gits.GitProvider, pullRequestNumber int, owner, repo, label string) error {
+func (t *TestOptions) ExpectThatPRHasLabel(client *scm.Client, pullRequestNumber int, owner, repo, label string) error {
+	orgAndRepo := fmt.Sprintf("%s/%s", owner, repo)
 	f := func() error {
-		repoStruct := &gits.GitRepository{
-			Name:         repo,
-			Organisation: owner,
-		}
-		pullRequest, err := provider.GetPullRequest(owner, repoStruct, pullRequestNumber)
+		pullRequest, _, err := client.PullRequests.Find(context.Background(), orgAndRepo, pullRequestNumber)
 		if err != nil {
 			return err
 		}
@@ -896,7 +904,7 @@ func (t *TestOptions) ExpectThatPRHasLabel(provider gits.GitProvider, pullReques
 			return fmt.Errorf("the pull request has no labels")
 		}
 		for _, l := range pullRequest.Labels {
-			if *l.Name == label {
+			if l.Name == label {
 				return nil
 			}
 		}

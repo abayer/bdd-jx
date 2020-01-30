@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jenkins-x/go-scm/scm"
 	"github.com/pkg/errors"
 
 	"github.com/jenkins-x/bdd-jx/test/helpers"
 
 	"github.com/jenkins-x/bdd-jx/test/utils"
-	"github.com/jenkins-x/jx/pkg/gits"
 	"github.com/jenkins-x/jx/pkg/util"
 
 	. "github.com/onsi/ginkgo"
@@ -106,31 +106,29 @@ func createQuickstartTests(quickstartName string) bool {
 						}
 
 						if T.WeShouldTestChatOpsCommands() {
-							gitProvider, err := T.GetGitProvider()
+							scmClient, username, err := T.GetSCMClient()
 							Expect(err).NotTo(HaveOccurred())
 							By("creating an issue and assigning it to a valid user", func() {
-								issue := &gits.GitIssue{
-									Owner: owner,
-									Repo:  applicationName,
+								issue := &scm.IssueInput{
 									Title: "Test the /assign command",
 									Body:  "This tests assigning a user using a ChatOps command",
 								}
-								err = T.CreateIssueAndAssignToUserWithChatOpsCommand(issue, gitProvider)
+								err = T.CreateIssueAndAssignToUserWithChatOpsCommand(owner, applicationName, username, issue, scmClient)
 								Expect(err).NotTo(HaveOccurred())
 							})
 
 							By("attempting to LGTM our own PR", func() {
-								err = T.AttemptToLGTMOwnPR(gitProvider, owner, applicationName)
+								err = T.AttemptToLGTMOwnPR(scmClient, owner, applicationName)
 								Expect(err).NotTo(HaveOccurred())
 							})
 
 							By("adding a hold label", func() {
-								err = T.AddHoldLabelToPRWithChatOpsCommand(gitProvider, owner, applicationName)
+								err = T.AddHoldLabelToPRWithChatOpsCommand(scmClient, owner, applicationName)
 								Expect(err).NotTo(HaveOccurred())
 							})
 
 							By("adding a WIP label", func() {
-								err = T.AddWIPLabelToPRByUpdatingTitle(gitProvider, owner, applicationName)
+								err = T.AddWIPLabelToPRByUpdatingTitle(scmClient, owner, applicationName)
 								Expect(err).NotTo(HaveOccurred())
 							})
 						}

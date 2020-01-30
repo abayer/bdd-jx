@@ -43,7 +43,7 @@ require (
 	github.com/hpcloud/tail v1.0.0
 	github.com/iancoleman/orderedmap v0.0.0-20181121102841-22c6ecc9fe13
 	github.com/jenkins-x/draft-repo v0.0.0-20180417100212-2f66cc518135
-	github.com/jenkins-x/go-scm v1.5.60
+	github.com/jenkins-x/go-scm v1.5.71
 	github.com/jenkins-x/golang-jenkins v0.0.0-20180919102630-65b83ad42314
 	github.com/jenkins-x/jx v0.0.0-20200109001856-9433d1c29eca
 	github.com/jetstack/cert-manager v0.5.2
@@ -115,4 +115,4 @@ replace github.com/Azure/go-autorest => github.com/Azure/go-autorest v10.15.5+in
 replace github.com/banzaicloud/bank-vaults => github.com/banzaicloud/bank-vaults v0.0.0-20190508130850-5673d28c46bd
 
 // TODO: Remove once https://github.com/jenkins-x/go-scm/pull/65 is merged and we can update the real dependency
-replace github.com/jenkins-x/go-scm => github.com/abayer/go-scm v1.5.1-0.20200117190616-8db331f9cc60
+replace github.com/jenkins-x/go-scm => github.com/abayer/go-scm v1.5.1-0.20200130212948-b0ac4373acc7
