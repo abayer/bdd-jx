@@ -750,7 +750,8 @@ func (t *TestOptions) CreateIssueAndAssignToUserWithChatOpsCommand(issue *gits.G
 		*createdIssue.Number,
 		fmt.Sprintf("/assign %s", provider.CurrentUsername()),
 	)
-	if err != nil {
+	// GitLab is going to error on this but do the thing anyway, so look for its error.
+	if err != nil && !strings.Contains(err.Error(), ":note=>[\"can't be blank\"]") {
 		return err
 	}
 	utils.LogInfof("create issue comment on issue %d\n", *createdIssue.Number)
