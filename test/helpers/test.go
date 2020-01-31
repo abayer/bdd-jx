@@ -21,6 +21,7 @@ import (
 	"github.com/jenkins-x/jx/pkg/gits"
 	"github.com/jenkins-x/jx/pkg/kube"
 	"golang.org/x/oauth2"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/cenkalti/backoff"
 	"github.com/jenkins-x/bdd-jx/test/utils/parsers"
@@ -81,6 +82,9 @@ var (
 
 	// EnableChatOpsTests turns on the chatops tests when specified as true
 	EnableChatOpsTests = utils.GetEnv("BDD_ENABLE_TEST_CHATOPS_COMMANDS", "false")
+
+	// EnableAddCommitToPullRequest turns on pushing a second commit to the pull request when true
+	EnableAddCommitToPullRequest = utils.GetEnv("BDD_ENABLE_ADD_COMMIT_TO_PULL_REQUEST", "false")
 )
 
 // TestOptions is the base testing object
@@ -380,13 +384,24 @@ func (t *TestOptions) TheApplicationShouldBeBuiltAndPromotedViaCICD(statusCode i
 // CreatePullRequestAndGetPreviewEnvironment asserts that a pull request can be created
 // on the application and the PR goes green and a preview environment is available
 func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) error {
+	return t.CreateOrUpdatePullRequestAndGetPreviewEnvironment(statusCode, false)
+}
+
+// CreateOrUpdatePullRequestAndGetPreviewEnvironment asserts that a pull request can be created or updated
+// on the application and the PR goes green and a preview environment is available
+func (t *TestOptions) CreateOrUpdatePullRequestAndGetPreviewEnvironment(statusCode int, update bool) error {
 	applicationName := t.GetApplicationName()
 	workDir := filepath.Join(t.WorkDir, applicationName)
 	owner := t.GetGitOrganisation()
 	r := runner.New(workDir, nil, 0)
 
 	By(fmt.Sprintf("creating a pull request in directory %s", workDir), func() {
-		t.ExpectCommandExecution(workDir, TimeoutCmdLine, 0, "git", "checkout", "-b", "changes")
+		coCmd := []string{"checkout"}
+		if !update {
+			coCmd = append(coCmd, "-b")
+		}
+		coCmd = append(coCmd, "changes")
+		t.ExpectCommandExecution(workDir, TimeoutCmdLine, 0, "git", coCmd...)
 	})
 
 	By("making a code change, committing and pushing it", func() {
@@ -394,57 +409,70 @@ func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) 
 		fileName := "README.md"
 		readme := filepath.Join(workDir, fileName)
 
-		data := []byte("My First PR/n")
+		randomString := rand.String(10)
+		data := []byte(fmt.Sprintf("My PR - %s\n", randomString))
 		err := ioutil.WriteFile(readme, data, util.DefaultWritePermissions)
 		if err != nil {
 			panic(err)
 		}
 
 		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
-		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "commit", "-a", "-m", "My first PR commit")
+		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "commit", "-a", "-m", "My PR commit - " + randomString)
 		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "push", "--set-upstream", "origin", "changes")
 	})
 
-	args := []string{"create", "pullrequest", "-b", "--title", "My First PR commit", "--body", "PR comments"}
-	argsStr := strings.Join(args, " ")
-	var out string
-	By(fmt.Sprintf("creating a pull request by running jx %s", argsStr), func() {
-		var err error
-		out, err = r.RunWithOutputNoTimeout(args...)
-		out = strings.TrimSpace(out)
-		if err != nil {
-			utils.LogInfof("ERROR: %s\n", err.Error())
-		} else {
-			Expect(out).ShouldNot(BeEmpty(), "no output returned from command: jx "+argsStr)
-		}
-		utils.ExpectNoError(err)
-	})
-
-	utils.LogInfof("running jx %s and got result: %s\n", argsStr, out)
-
-	var pr *parsers.CreatePullRequest
-	var err error
-	By(fmt.Sprintf("parsing the output %s of jx %s", out, argsStr), func() {
-		pr, err = parsers.ParseJxCreatePullRequest(out)
-		utils.ExpectNoError(err)
-	})
-
 	var prNumber int
-	By(fmt.Sprintf("validating that the pull request %v exists and has a number", pr), func() {
-		Expect(pr).ShouldNot(BeNil())
-		prNumber = pr.PullRequestNumber
-		Expect(prNumber).ShouldNot(BeNil())
+	var prURL string
+	var out string
 
-	})
+	if update {
+		// Assume there's only one open PR.
+		provider, err := t.GetGitProvider()
+		Expect(err).Should(BeNil())
+		existingPR, err := t.GetFirstOpenPullRequest(provider, owner, applicationName)
+		Expect(err).Should(BeNil())
+		Expect(existingPR).ShouldNot(BeNil())
+		prNumber = *existingPR.Number
+		prURL = existingPR.URL
+	} else {
+		args := []string{"create", "pullrequest", "-b", "--title", "My First PR commit", "--body", "PR comments"}
+		argsStr := strings.Join(args, " ")
+		By(fmt.Sprintf("creating a pull request by running jx %s", argsStr), func() {
+			var err error
+			out, err = r.RunWithOutputNoTimeout(args...)
+			out = strings.TrimSpace(out)
+			if err != nil {
+				utils.LogInfof("ERROR: %s\n", err.Error())
+			} else {
+				Expect(out).ShouldNot(BeEmpty(), "no output returned from command: jx "+argsStr)
+			}
+			utils.ExpectNoError(err)
+		})
+
+		utils.LogInfof("running jx %s and got result: %s\n", argsStr, out)
+
+		var pr *parsers.CreatePullRequest
+		var err error
+		By(fmt.Sprintf("parsing the output %s of jx %s", out, argsStr), func() {
+			pr, err = parsers.ParseJxCreatePullRequest(out)
+			utils.ExpectNoError(err)
+		})
+
+		By(fmt.Sprintf("validating that the pull request %v exists and has a number", pr), func() {
+			Expect(pr).ShouldNot(BeNil())
+			prNumber = pr.PullRequestNumber
+			prURL = pr.Url
+			Expect(prNumber).ShouldNot(BeNil())
+		})
+	}
 
 	jobName := owner + "/" + applicationName + "/PR-" + strconv.Itoa(prNumber)
 	By(fmt.Sprintf("checking that job %s completes successfully", jobName), func() {
 		t.ThereShouldBeAJobThatCompletesSuccessfully(jobName, TimeoutBuildCompletes)
-		utils.ExpectNoError(err)
 	})
 
-	args = []string{"get", "previews"}
-	argsStr = strings.Join(args, " ")
+	args := []string{"get", "previews"}
+	argsStr := strings.Join(args, " ")
 	By(fmt.Sprintf("verifying there is a preview environment by running jx %s", argsStr), func() {
 		var err error
 		out, err = r.RunWithOutput(args...)
@@ -469,14 +497,14 @@ func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) 
 		if err != nil {
 			return logError(err)
 		}
-		previewEnv := previews[pr.Url]
+		previewEnv := previews[prURL]
 		applicationUrl := previewEnv.Url
 		if applicationUrl == "" {
-			idx := strings.LastIndex(pr.Url, "/")
+			idx := strings.LastIndex(prURL, "/")
 			for k, v := range previews {
 				utils.LogInfof("found Preview URL %s with preview %s", k, v.Url)
 				if idx > 0 {
-					if strings.HasSuffix(k, pr.Url[idx:]) {
+					if strings.HasSuffix(k, prURL[idx:]) {
 						applicationUrl = v.Url
 						utils.LogInfof("for PR %s using preview %s", k, applicationUrl)
 					}
@@ -484,7 +512,7 @@ func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) 
 			}
 		}
 		if applicationUrl == "" {
-			return logError(fmt.Errorf("no Preview Application URL found for PR %s", pr.Url))
+			return logError(fmt.Errorf("no Preview Application URL found for PR %s", prURL))
 		}
 
 		utils.LogInfof("Running Preview Environment application at: %s\n", util.ColorInfo(applicationUrl))
@@ -543,9 +571,18 @@ func (t *TestOptions) GetPullRequestWithTitle(client *github.Client, ctx context
 	return matchingPR, nil
 }
 
-// TailBuildLog tails the logs of the specified job
+// TailBuildLog tails the logs of the specified job, assuming there's only one.
 func (t *TestOptions) TailBuildLog(jobName string, maxDuration time.Duration) {
-	args := []string{"get", "build", "logs", "--wait", jobName}
+	t.TailBuildLogWithNumber(jobName, 0, maxDuration)
+}
+
+// TailBuildLogWithNumber tails the logs of the specified job and an optional build number
+func (t *TestOptions) TailBuildLogWithNumber(jobName string, buildNumber int, maxDuration time.Duration) {
+	args := []string{"get", "build", "logs", "--wait"}
+	if buildNumber != 0 {
+		args = append(args, "--build", strconv.Itoa(buildNumber))
+	}
+	args = append(args, jobName)
 	argsStr := strings.Join(args, " ")
 	By(fmt.Sprintf("checking that there is a job built successfully by calling jx %s", argsStr), func() {
 		t.ExpectJxExecution(t.WorkDir, maxDuration, 0, args...)
@@ -554,12 +591,20 @@ func (t *TestOptions) TailBuildLog(jobName string, maxDuration time.Duration) {
 
 // ThereShouldBeAJobThatCompletesSuccessfully asserts that the given job name completes within the given duration
 func (t *TestOptions) ThereShouldBeAJobThatCompletesSuccessfully(jobName string, maxDuration time.Duration) {
-	t.TailBuildLog(jobName, maxDuration)
+	t.ThereShouldBeAJobThatCompletesSuccessfullyWithNumber(jobName, 0, maxDuration)
+}
+
+// ThereShouldBeAJobThatCompletesSuccessfullyWithNumber asserts that the given job name (and build number if not 0) completes within the given duration
+func (t *TestOptions) ThereShouldBeAJobThatCompletesSuccessfullyWithNumber(jobName string, number int, maxDuration time.Duration) {
+	t.TailBuildLogWithNumber(jobName, number, maxDuration)
 
 	r := runner.New(t.WorkDir, nil, 0)
 	// TODO the current --build 1 breaks as it can be number 2 these days!
 	//out := r.RunWithOutput("get", "activities", "--filter", jobName, "--build", "1")
 	args := []string{"get", "activities", "--filter", jobName}
+	if number != 0 {
+		args = append(args, "--build", strconv.Itoa(number))
+	}
 	argsStr := strings.Join(args, " ")
 	var activities map[string]*parsers.Activity
 	f := func() error {
@@ -585,20 +630,23 @@ func (t *TestOptions) ThereShouldBeAJobThatCompletesSuccessfully(jobName string,
 		err := RetryExponentialBackoff(TimeoutPipelineActivityComplete, f)
 		Expect(err).ShouldNot(HaveOccurred(), "get applications with a URL")
 	})
-
-	activityKey := fmt.Sprintf("%s #%d", jobName, 1)
+	activityNumber := number
+	if number == 0 {
+		activityNumber = 1
+	}
+	activityKey := fmt.Sprintf("%s #%d", jobName, activityNumber)
 	By(fmt.Sprintf("finding the activity for %s in %v", activityKey, activities), func() {
 		// TODO disabling this for now as we get a failure on ng
 		if activities != nil {
-			Expect(activities).Should(HaveLen(1), fmt.Sprintf("should be one activity but found %d having run jx get activities --filter %s --build 1; activities %v", len(activities), jobName, activities))
-			activity, ok := activities[fmt.Sprintf("%s #%d", jobName, 1)]
+			Expect(activities).Should(HaveLen(1), fmt.Sprintf("should be one activity but found %d having run jx get activities --filter %s --build %d; activities %v", len(activities), jobName, activityNumber, activities))
+			activity, ok := activities[fmt.Sprintf("%s #%d", jobName, activityNumber)]
 			if !ok {
 				// TODO lets see if the build is number 2 instead which it is for tekton currently
-				activity, ok = activities[fmt.Sprintf("%s #%d", jobName, 2)]
+				activity, ok = activities[fmt.Sprintf("%s #%d", jobName, activityNumber + 1)]
 			}
-			Expect(ok).Should(BeTrue(), fmt.Sprintf("could not find job with name %s #%d", jobName, 1))
+			Expect(ok).Should(BeTrue(), fmt.Sprintf("could not find job with name %s #%d", jobName, activityNumber))
 
-			utils.LogInfof("build status for '%s' is '%s'\n", jobName+"-1", activity.Status)
+			utils.LogInfof("build status for '%s' is '%s'\n", jobName+"-"+strconv.Itoa(activityNumber), activity.Status)
 		}
 	})
 
@@ -676,6 +724,11 @@ func (t *TestOptions) DeleteRepos() bool {
 func (t *TestOptions) TestPullRequest() bool {
 	text := os.Getenv("JX_DISABLE_TEST_PULL_REQUEST")
 	return strings.ToLower(text) != "true"
+}
+
+// TestAddCommitToPullRequest should we test adding a commit to an existing pull request on the repo
+func (t *TestOptions) TestAddCommitToPullRequest() bool {
+	return strings.ToLower(EnableAddCommitToPullRequest) != "true"
 }
 
 // WaitForFirstRelease should we wait for first release to complete before trying a pull request
@@ -785,17 +838,24 @@ func (t *TestOptions) ExpectThatIssueIsAssignedToUser(provider gits.GitProvider,
 	return RetryExponentialBackoff(TimeoutProwActionWait, f)
 }
 
+func (t *TestOptions) GetFirstOpenPullRequest(provider gits.GitProvider, owner string, repo string) (*gits.GitPullRequest, error) {
+	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	if len(pullRequests) < 1 {
+		return nil, fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
+	}
+	return pullRequests[0], nil
+}
+
 // AttemptToLGTMOwnPR return an error if the /lgtm fails to add the lgtm label to PR
 func (t *TestOptions) AttemptToLGTMOwnPR(provider gits.GitProvider, owner string, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+	originalPR, err := t.GetFirstOpenPullRequest(provider, owner, repo)
 	if err != nil {
 		return err
 	}
-	if len(pullRequests) < 1 {
-		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
-	}
-
-	err = provider.AddPRComment(pullRequests[0], "/lgtm")
+	err = provider.AddPRComment(originalPR, "/lgtm")
 	if err != nil {
 		return err
 	}
@@ -804,7 +864,7 @@ func (t *TestOptions) AttemptToLGTMOwnPR(provider gits.GitProvider, owner string
 		Name:         repo,
 		Organisation: owner,
 	}
-	pullRequest, err := provider.GetPullRequest(owner, repoStruct, *pullRequests[0].Number)
+	pullRequest, err := provider.GetPullRequest(owner, repoStruct, *originalPR.Number)
 	if err != nil {
 		return err
 	}
@@ -838,33 +898,25 @@ func (t *TestOptions) ExpectThatPRHasCommentWithText(provider gits.GitProvider, 
 
 // AddHoldLabelToPRWithChatOpsCommand returns an error of the command fails to add the do-not-merge/hold label
 func (t *TestOptions) AddHoldLabelToPRWithChatOpsCommand(provider gits.GitProvider, owner, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
-	if err != nil {
-		return err
-	}
-	if len(pullRequests) < 1 {
-		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
-	}
-
-	err = provider.AddPRComment(pullRequests[0], "/hold")
+	pr, err := t.GetFirstOpenPullRequest(provider, owner, repo)
 	if err != nil {
 		return err
 	}
 
-	return t.ExpectThatPRHasLabel(provider, *pullRequests[0].Number, owner, repo, "do-not-merge/hold")
+	err = provider.AddPRComment(pr, "/hold")
+	if err != nil {
+		return err
+	}
+
+	return t.ExpectThatPRHasLabel(provider, *pr.Number, owner, repo, "do-not-merge/hold")
 }
 
 // AddWIPLabelToPRByUpdatingTitle adds the WIP label by adding WIP to a pull request's title
 func (t *TestOptions) AddWIPLabelToPRByUpdatingTitle(provider gits.GitProvider, owner, repo string) error {
-	pullRequests, err := provider.ListOpenPullRequests(owner, repo)
+	pullRequest, err := t.GetFirstOpenPullRequest(provider, owner, repo)
 	if err != nil {
 		return err
 	}
-	if len(pullRequests) < 1 {
-		return fmt.Errorf("no open pull requests found for %s/%s", owner, repo)
-	}
-
-	pullRequest := pullRequests[0]
 
 	pullRequestArgs := &gits.GitPullRequestArguments{
 		Title: fmt.Sprintf("WIP %s", pullRequest.Title),

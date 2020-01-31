@@ -103,6 +103,11 @@ func createQuickstartTests(quickstartName string) bool {
 							By("performing a pull request on the source and asserting that a preview environment is created", func() {
 								T.CreatePullRequestAndGetPreviewEnvironment(200)
 							})
+							if T.TestAddCommitToPullRequest() {
+								By("updating the existing pull request and asserting that a preview environment is created", func() {
+									T.CreateOrUpdatePullRequestAndGetPreviewEnvironment(200, true)
+								})
+							}
 						}
 
 						if T.WeShouldTestChatOpsCommands() {
