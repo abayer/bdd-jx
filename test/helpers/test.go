@@ -744,23 +744,26 @@ func (t *TestOptions) CreateIssueAndAssignToUserWithChatOpsCommand(issue *gits.G
 
 	utils.LogInfof("created issue with number %d\n", *createdIssue.Number)
 
-	err = provider.CreateIssueComment(
-		issue.Owner,
-		issue.Repo,
-		*createdIssue.Number,
-		fmt.Sprintf("/assign %s", provider.CurrentUsername()),
-	)
-	// GitLab is going to error on this but do the thing anyway, so look for its error.
-	if err != nil && !strings.Contains(err.Error(), ":note=>[\"can't be blank\"]") {
-		return err
+	// Skip assign comment if we're testing GitLab.
+	if provider.Kind() != "gitlab" {
+		err = provider.CreateIssueComment(
+			issue.Owner,
+			issue.Repo,
+			*createdIssue.Number,
+			fmt.Sprintf("/assign %s", provider.CurrentUsername()),
+		)
+		// GitLab is going to error on this but do the thing anyway, so look for its error.
+		if err != nil {
+			return err
+		}
+		utils.LogInfof("create issue comment on issue %d\n", *createdIssue.Number)
+
+		createdIssue.Owner = issue.Owner
+		createdIssue.Repo = issue.Repo
+
+		return t.ExpectThatIssueIsAssignedToUser(provider, createdIssue, provider.CurrentUsername())
 	}
-	utils.LogInfof("create issue comment on issue %d\n", *createdIssue.Number)
-
-	createdIssue.Owner = issue.Owner
-	createdIssue.Repo = issue.Repo
-
-	return t.ExpectThatIssueIsAssignedToUser(provider, createdIssue, provider.CurrentUsername())
-
+	return nil
 }
 
 // ExpectThatIssueIsAssignedToUser returns an error if
