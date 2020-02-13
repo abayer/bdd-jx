@@ -273,7 +273,7 @@ func (t *TestOptions) NextBuildNumber(repo *gits.GitRepository) string {
 
 // GetPullTitleForBranch returns the PullTitle field from the PipelineActivity for the owner/repo/branch
 func (t *TestOptions) GetPullTitleFromActivity(owner string, repo string, branch string, buildNumber int) string {
-	activityName := fmt.Sprintf("%s-%s-%s-%s", owner, repo, branch, strconv.Itoa(buildNumber))
+	activityName := strings.ToLower(fmt.Sprintf("%s-%s-%s-%s", owner, repo, branch, strconv.Itoa(buildNumber)))
 	args := []string{"get", "pipelineactivity", activityName, "-o=jsonpath='{.spec.pullTitle}'"}
 	utils.LogInfof("args: kubectl %s", strings.Join(args, " "))
 	command := exec.Command("kubectl", args...)
