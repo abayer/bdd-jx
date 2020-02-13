@@ -91,20 +91,20 @@ func createQuickstartTests(quickstartName string) bool {
 					owner := T.GetGitOrganisation()
 					jobName := owner + "/" + applicationName + "/master"
 
-					if T.TestPullRequest() {
-						By("performing a pull request on the source and asserting that a preview environment is created", func() {
-							T.CreatePullRequestAndGetPreviewEnvironment(200)
-						})
-					}
-
 					if T.WaitForFirstRelease() {
 						//FIXME Need to wait a little here to ensure that the build has started before asking for the log as the jx create quickstart command returns slightly before the build log is available
 						time.Sleep(30 * time.Second)
 						By(fmt.Sprintf("waiting for the first release of %s", applicationName), func() {
 							T.ThereShouldBeAJobThatCompletesSuccessfully(jobName, helpers.TimeoutBuildCompletes)
-							T.TheApplicationIsRunningInStaging(200)
+//							T.TheApplicationIsRunningInStaging(200)
 						})
-						
+
+						if T.TestPullRequest() {
+							By("performing a pull request on the source and asserting that a preview environment is created", func() {
+								T.CreatePullRequestAndGetPreviewEnvironment(200)
+							})
+						}
+
 						if T.WeShouldTestChatOpsCommands() {
 							gitProvider, err := T.GetGitProvider()
 							Expect(err).NotTo(HaveOccurred())
