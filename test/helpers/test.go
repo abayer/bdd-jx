@@ -711,6 +711,7 @@ func (t *TestOptions) TestPullRequest() bool {
 // ShouldTestPipelineActivityUpdate should we make sure the build controller is updating the PipelineActivity
 func (t *TestOptions) ShouldTestPipelineActivityUpdate() bool {
 	text := os.Getenv(DisablePipelineActivityCheck)
+	utils.LogInfof("Disable PA check: %s", text)
 	return strings.ToLower(text) != "true"
 }
 
