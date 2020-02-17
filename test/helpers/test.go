@@ -710,9 +710,8 @@ func (t *TestOptions) TestPullRequest() bool {
 
 // ShouldTestPipelineActivityUpdate should we make sure the build controller is updating the PipelineActivity
 func (t *TestOptions) ShouldTestPipelineActivityUpdate() bool {
-	text := os.Getenv(DisablePipelineActivityCheck)
-	utils.LogInfof("Disable PA check: %s", text)
-	return strings.ToLower(text) != "true"
+	utils.LogInfof("Disable PA check: %s", DisablePipelineActivityCheck)
+	return strings.ToLower(DisablePipelineActivityCheck) != "true"
 }
 
 // WaitForFirstRelease should we wait for first release to complete before trying a pull request
