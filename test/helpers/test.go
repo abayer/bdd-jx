@@ -22,6 +22,7 @@ import (
 	"github.com/jenkins-x/jx/pkg/gits"
 	"github.com/jenkins-x/jx/pkg/kube"
 	"golang.org/x/oauth2"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/cenkalti/backoff"
 	"github.com/jenkins-x/bdd-jx/test/utils/parsers"
@@ -451,35 +452,24 @@ func (t *TestOptions) TheApplicationShouldBeBuiltAndPromotedViaCICD(statusCode i
 	})
 }
 
-// CreatePullRequestAndGetPreviewEnvironment asserts that a pull request can be created
-// on the application and the PR goes green and a preview environment is available
-func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) error {
+// CreatePullRequestWithLocalChange asserts that a pull request can be created with a local change and given title on the
+// application, and return the CreatePullRequest from the creation.
+func (t *TestOptions) CreatePullRequestWithLocalChange(prTitle string, makeLocalChange func(string)) *parsers.CreatePullRequest {
 	applicationName := t.GetApplicationName()
 	workDir := filepath.Join(t.WorkDir, applicationName)
-	owner := t.GetGitOrganisation()
 	r := runner.New(workDir, nil, 0)
+	branchName := "changes-" + rand.String(5)
 
 	By(fmt.Sprintf("creating a pull request in directory %s", workDir), func() {
-		t.ExpectCommandExecution(workDir, TimeoutCmdLine, 0, "git", "checkout", "-b", "changes")
+		t.ExpectCommandExecution(workDir, TimeoutCmdLine, 0, "git", "checkout", "-b", branchName)
 	})
 
 	By("making a code change, committing and pushing it", func() {
-		// now lets make a code change
-		fileName := "README.md"
-		readme := filepath.Join(workDir, fileName)
-
-		data := []byte("My First PR/n")
-		err := ioutil.WriteFile(readme, data, util.DefaultWritePermissions)
-		if err != nil {
-			panic(err)
-		}
-
-		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+		makeLocalChange(workDir)
 		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "commit", "-a", "-m", "My first PR commit")
-		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "push", "--set-upstream", "origin", "changes")
+		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "push", "--set-upstream", "origin", branchName)
 	})
 
-	prTitle := "My First PR commit"
 	args := []string{"create", "pullrequest", "-b", "--title", prTitle, "--body", "PR comments"}
 	argsStr := strings.Join(args, " ")
 	var out string
@@ -511,12 +501,38 @@ func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) 
 		Expect(prNumber).ShouldNot(BeNil())
 
 	})
+	return pr
+}
 
+// CreatePullRequestAndGetPreviewEnvironment asserts that a pull request can be created
+// on the application and the PR goes green and a preview environment is available
+func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) error {
+	applicationName := t.GetApplicationName()
+	workDir := filepath.Join(t.WorkDir, applicationName)
+	owner := t.GetGitOrganisation()
+	r := runner.New(workDir, nil, 0)
+
+	prTitle := "My First PR commit"
+
+	pr := t.CreatePullRequestWithLocalChange(prTitle, func(workDir string) {
+		// now lets make a code change
+		fileName := "README.md"
+		readme := filepath.Join(workDir, fileName)
+
+		data := []byte("My First PR/n")
+		err := ioutil.WriteFile(readme, data, util.DefaultWritePermissions)
+		if err != nil {
+			panic(err)
+		}
+
+		t.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+	})
+
+	prNumber := pr.PullRequestNumber
 	buildNumber := 0
 	jobName := owner + "/" + applicationName + "/PR-" + strconv.Itoa(prNumber)
 	By(fmt.Sprintf("checking that job %s completes successfully", jobName), func() {
 		buildNumber = t.ThereShouldBeAJobThatCompletesSuccessfully(jobName, TimeoutBuildCompletes)
-		utils.ExpectNoError(err)
 	})
 	if t.ShouldTestPipelineActivityUpdate() {
 		By("verifying that PipelineActivity has been updated to include the pull request title", func() {
@@ -525,8 +541,9 @@ func (t *TestOptions) CreatePullRequestAndGetPreviewEnvironment(statusCode int) 
 		})
 	}
 
-	args = []string{"get", "previews"}
-	argsStr = strings.Join(args, " ")
+	args := []string{"get", "previews"}
+	argsStr := strings.Join(args, " ")
+	var out string
 	By(fmt.Sprintf("verifying there is a preview environment by running jx %s", argsStr), func() {
 		var err error
 		out, err = r.RunWithOutput(args...)
@@ -639,22 +656,14 @@ func (t *TestOptions) ApprovePRFromLogOutput(provider gits.GitProvider, approver
 	Expect(pr).ShouldNot(BeNil())
 	Expect(*pr.State).Should(Equal("open"))
 
-	By("adding the approver user as a collaborator")
-	err = t.AddApproverAsCollaborator(provider, gitInfo.Organisation, gitInfo.Name)
-	Expect(err).ShouldNot(HaveOccurred())
-
 	By("approving the PR")
 	err = t.ApprovePR(provider, approverProvider, pr)
 	Expect(err).ShouldNot(HaveOccurred())
 }
 
 // AddApproverAsCollaborator adds the approver user as a collaborator to the given repo, and accepts the invitation.
-func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, repoOwner string, repoName string) error {
+func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, approverProvider gits.GitProvider, repoOwner string, repoName string) error {
 	err := provider.AddCollaborator(PRApproverUsername, repoOwner, repoName)
-	if err != nil {
-		return err
-	}
-	approverProvider, err := t.GetApproverGitProvider()
 	if err != nil {
 		return err
 	}
@@ -684,6 +693,52 @@ func (t *TestOptions) GetPullRequestByNumber(provider gits.GitProvider, repoOwne
 	}
 
 	return pr, nil
+}
+
+// WaitForPullRequestCommitStatus checks a pull request until either it reaches a given status in all the contexts supplied
+// or a timeout is reached.
+func (t *TestOptions) WaitForPullRequestCommitStatus(provider gits.GitProvider, pr *gits.GitPullRequest, desiredStatus string, contexts []string) {
+	Expect(pr.LastCommitSha).ShouldNot(Equal(""))
+
+	checkPRStatuses := func() error {
+		statuses, err := provider.ListCommitStatus(pr.Owner, pr.Repo, pr.LastCommitSha)
+		if err != nil {
+			utils.LogInfof("error fetching commit statuses for PR %s/%s/%d: %s\n", pr.Owner, pr.Repo, *pr.Number, err)
+			return err
+		}
+		contextStatuses := make(map[string]*gits.GitRepoStatus)
+		for _, status := range statuses {
+			if status == nil {
+				return err
+			}
+			// Only set the status if it's the first one we see for the context, which is always the newest
+			if _, exists := contextStatuses[status.Context]; !exists {
+				contextStatuses[status.Context] = status
+			}
+		}
+
+		var wrongStatuses []string
+
+		for _, c := range contexts {
+			status, ok := contextStatuses[c]
+			if !ok || status == nil {
+				wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: missing", c))
+			} else if status.State != desiredStatus {
+				wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: %s", c, status.State))
+			}
+		}
+
+		if len(wrongStatuses) > 0 {
+			errMsg := fmt.Sprintf("wrong or missing status for PR %s/%s/%d context(s): %s, expected %s", pr.Owner, pr.Repo, *pr.Number, strings.Join(wrongStatuses, ", "), desiredStatus)
+			utils.LogInfof("WARNING: %s\n", errMsg)
+			return errors.New(errMsg)
+		}
+
+		return nil
+	}
+
+	err := RetryExponentialBackoff(TimeoutPipelineActivityComplete, checkPRStatuses)
+	Expect(err).ShouldNot(HaveOccurred())
 }
 
 // TailBuildLog tails the logs of the specified job
@@ -966,11 +1021,17 @@ func (t *TestOptions) MostRecentOpenPullRequestForOwnerAndRepo(provider gits.Git
 
 // ApprovePR attempts to /approve a PR with the given approver git provider, then verify the label is there with the default provider
 func (t *TestOptions) ApprovePR(defaultProvider gits.GitProvider, approverProvider gits.GitProvider, pullRequest *gits.GitPullRequest) error {
-	err := approverProvider.AddPRComment(pullRequest, "/approve")
+	By("adding the approver user as a collaborator")
+	err := t.AddApproverAsCollaborator(defaultProvider, approverProvider, pullRequest.Owner, pullRequest.Repo)
+	Expect(err).ShouldNot(HaveOccurred())
+
+	By("approving the PR")
+	err = approverProvider.AddPRComment(pullRequest, "/approve")
 	if err != nil {
 		return err
 	}
 
+	By("waiting for the approved label to appear")
 	return t.ExpectThatPRHasLabel(defaultProvider, *pullRequest.Number, pullRequest.Owner, pullRequest.Repo, "approved")
 }
 
