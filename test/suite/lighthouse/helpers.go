@@ -114,6 +114,88 @@ func ChatOpsTests() bool {
 						T.WaitForPullRequestToMerge(provider, ownersPR.Owner, ownersPR.Repo, *ownersPR.Number, ownersPR.URL)
 					})
 
+					Describe("Create three pull requests and approve them, leading to a batch merge", func() {
+						firstCreatedPR := T.CreatePullRequestWithLocalChange("First PR for batch", func(workDir string) {
+							fileName := "first-file"
+							owners := filepath.Join(workDir, fileName)
+
+							data := []byte("first file from first PR for batch")
+							err := ioutil.WriteFile(owners, data, util.DefaultWritePermissions)
+							if err != nil {
+								panic(err)
+							}
+
+							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+						})
+						secondCreatedPR := T.CreatePullRequestWithLocalChange("Second PR for batch", func(workDir string) {
+							fileName := "second-file"
+							owners := filepath.Join(workDir, fileName)
+
+							data := []byte("second file from second PR for batch")
+							err := ioutil.WriteFile(owners, data, util.DefaultWritePermissions)
+							if err != nil {
+								panic(err)
+							}
+
+							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+						})
+						thirdCreatedPR := T.CreatePullRequestWithLocalChange("Third PR for batch", func(workDir string) {
+							fileName := "third-file"
+							owners := filepath.Join(workDir, fileName)
+
+							data := []byte("third file from third PR for batch")
+							err := ioutil.WriteFile(owners, data, util.DefaultWritePermissions)
+							if err != nil {
+								panic(err)
+							}
+
+							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+						})
+						fourthCreatedPR := T.CreatePullRequestWithLocalChange("Fourth PR for batch", func(workDir string) {
+							fileName := "fourth-file"
+							owners := filepath.Join(workDir, fileName)
+
+							data := []byte("fourth file from fourth PR for batch")
+							err := ioutil.WriteFile(owners, data, util.DefaultWritePermissions)
+							if err != nil {
+								panic(err)
+							}
+
+							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
+						})
+						firstBatchPR, err := T.GetPullRequestByNumber(provider, firstCreatedPR.Owner, firstCreatedPR.Repository, firstCreatedPR.PullRequestNumber)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(firstBatchPR).ShouldNot(BeNil())
+						secondBatchPR, err := T.GetPullRequestByNumber(provider, secondCreatedPR.Owner, secondCreatedPR.Repository, secondCreatedPR.PullRequestNumber)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(secondBatchPR).ShouldNot(BeNil())
+						thirdBatchPR, err := T.GetPullRequestByNumber(provider, thirdCreatedPR.Owner, thirdCreatedPR.Repository, thirdCreatedPR.PullRequestNumber)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(thirdBatchPR).ShouldNot(BeNil())
+						fourthBatchPR, err := T.GetPullRequestByNumber(provider, fourthCreatedPR.Owner, fourthCreatedPR.Repository, fourthCreatedPR.PullRequestNumber)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(fourthBatchPR).ShouldNot(BeNil())
+
+						By("waiting for all four potential batch PRs to complete successfully", func() {
+							T.WaitForPullRequestCommitStatus(provider, "success", []string{defaultContext}, firstBatchPR, secondBatchPR, thirdBatchPR, fourthBatchPR)
+						})
+
+						By("approving all four potential batch PRs and waiting for the first one to merge", func() {
+							err = T.ApprovePullRequest(provider, approverProvider, firstBatchPR)
+							Expect(err).ShouldNot(HaveOccurred())
+							err = T.ApprovePullRequest(provider, approverProvider, secondBatchPR)
+							Expect(err).ShouldNot(HaveOccurred())
+							err = T.ApprovePullRequest(provider, approverProvider, thirdBatchPR)
+							Expect(err).ShouldNot(HaveOccurred())
+							err = T.ApprovePullRequest(provider, approverProvider, fourthBatchPR)
+							Expect(err).ShouldNot(HaveOccurred())
+
+							T.WaitForPullRequestToMerge(provider, firstBatchPR.Owner, firstBatchPR.Repo, *firstBatchPR.Number, firstBatchPR.URL)
+						})
+
+					})
+
+
 					prTitle := "My First PR commit"
 					var pr *gits.GitPullRequest
 					By("performing a pull request on the source and making sure it fails", func() {
@@ -135,7 +217,7 @@ func ChatOpsTests() bool {
 						Expect(err).NotTo(HaveOccurred())
 						Expect(pr).ShouldNot(BeNil())
 
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "failure", []string{defaultContext}, pr)
 					})
 
 					By("attempting to LGTM our own PR", func() {
@@ -165,10 +247,10 @@ func ChatOpsTests() bool {
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a pending status, meaning we've got a new build
-						T.WaitForPullRequestCommitStatus(provider, pr, "pending", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "pending", []string{defaultContext}, pr)
 
 						// Wait until we see the build fail.
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "failure", []string{defaultContext}, pr)
 					})
 
 					By("'/test this' with it failing again", func() {
@@ -176,10 +258,10 @@ func ChatOpsTests() bool {
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a pending status, meaning we've got a new build
-						T.WaitForPullRequestCommitStatus(provider, pr, "pending", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "pending", []string{defaultContext}, pr)
 
 						// Wait until we see the build fail.
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "failure", []string{defaultContext}, pr)
 					})
 
 					// '/override' has to be done by a repo admin, so use the bot user.
@@ -189,7 +271,7 @@ func ChatOpsTests() bool {
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a success status
-						T.WaitForPullRequestCommitStatus(provider, pr, "success", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(provider, "success", []string{defaultContext}, pr)
 
 						T.WaitForPullRequestToMerge(provider, pr.Owner, pr.Repo, *pr.Number, pr.URL)
 					})

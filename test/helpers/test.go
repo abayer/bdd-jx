@@ -670,43 +670,57 @@ func (t *TestOptions) GetPullRequestByNumber(provider gits.GitProvider, repoOwne
 
 // WaitForPullRequestCommitStatus checks a pull request until either it reaches a given status in all the contexts supplied
 // or a timeout is reached.
-func (t *TestOptions) WaitForPullRequestCommitStatus(provider gits.GitProvider, pr *gits.GitPullRequest, desiredStatus string, contexts []string) {
-	Expect(pr.LastCommitSha).ShouldNot(Equal(""))
+func (t *TestOptions) WaitForPullRequestCommitStatus(provider gits.GitProvider, desiredStatus string, contexts []string, prs ...*gits.GitPullRequest) {
+	for _, pr := range prs {
+		Expect(pr.LastCommitSha).ShouldNot(Equal(""))
+	}
 
 	checkPRStatuses := func() error {
-		statuses, err := provider.ListCommitStatus(pr.Owner, pr.Repo, pr.LastCommitSha)
-		if err != nil {
-			utils.LogInfof("error fetching commit statuses for PR %s/%s/%d: %s\n", pr.Owner, pr.Repo, *pr.Number, err)
-			return err
-		}
-		contextStatuses := make(map[string]*gits.GitRepoStatus)
-		for _, status := range statuses {
-			if status == nil {
-				return err
+		By("checking the commit statuses for provided PRs")
+		var errMsgs []string
+		for _, pr := range prs {
+			prName := fmt.Sprintf("%s/%s/%d", pr.Owner, pr.Repo, *pr.Number)
+
+			var wrongStatuses []string
+			By(fmt.Sprintf("listing commit statuses for %s", prName))
+			statuses, err := provider.ListCommitStatus(pr.Owner, pr.Repo, pr.LastCommitSha)
+			if err != nil {
+				errMsg := fmt.Sprintf("error fetching commit statuses for %s: %s", prName, err)
+				errMsgs = append(errMsgs, "    " + errMsg)
+				utils.LogInfof("WARNING: %s\n", errMsg)
+				continue
 			}
-			// Only set the status if it's the first one we see for the context, which is always the newest
-			if _, exists := contextStatuses[status.Context]; !exists {
-				contextStatuses[status.Context] = status
+			contextStatuses := make(map[string]*gits.GitRepoStatus)
+
+			for _, status := range statuses {
+				if status != nil {
+					// Only set the status if it's the first one we see for the context, which is always the newest
+					if _, exists := contextStatuses[status.Context]; !exists {
+						contextStatuses[status.Context] = status
+					}
+				}
+			}
+
+			for _, c := range contexts {
+				status, ok := contextStatuses[c]
+				if !ok || status == nil {
+					wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: missing", c))
+				} else if status.State != desiredStatus {
+					wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: %s", c, status.State))
+				}
+			}
+
+			if len(wrongStatuses) > 0 {
+				errMsg := fmt.Sprintf("wrong or missing status for PR %s context(s): %s, expected %s", prName, strings.Join(wrongStatuses, ", "), desiredStatus)
+				errMsgs = append(errMsgs, "    " + errMsg)
+				utils.LogInfof("WARNING: %s\n", errMsg)
 			}
 		}
 
-		var wrongStatuses []string
-
-		for _, c := range contexts {
-			status, ok := contextStatuses[c]
-			if !ok || status == nil {
-				wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: missing", c))
-			} else if status.State != desiredStatus {
-				wrongStatuses = append(wrongStatuses, fmt.Sprintf("%s: %s", c, status.State))
-			}
+		if len(errMsgs) > 0 {
+			utils.LogInfof("PRs not yet with desired status, retrying")
+			return fmt.Errorf("PRs do not have desired status:\n%s", strings.Join(errMsgs, "\n"))
 		}
-
-		if len(wrongStatuses) > 0 {
-			errMsg := fmt.Sprintf("wrong or missing status for PR %s/%s/%d context(s): %s, expected %s", pr.Owner, pr.Repo, *pr.Number, strings.Join(wrongStatuses, ", "), desiredStatus)
-			utils.LogInfof("WARNING: %s\n", errMsg)
-			return errors.New(errMsg)
-		}
-
 		return nil
 	}
 
@@ -1164,6 +1178,10 @@ func (t *TestOptions) ExpectThatPullRequestDoesNotHaveLabel(provider gits.GitPro
 func (t *TestOptions) WaitForCreatedPullRequestToMerge(provider gits.GitProvider, prCreateOutput string) {
 	createdPR, err := parsers.ParseJxCreatePullRequestFromFullLog(prCreateOutput)
 	Expect(err).ShouldNot(HaveOccurred())
+
+	pr, err := t.GetPullRequestByNumber(provider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(pr).ShouldNot(BeNil())
 
 	t.WaitForPullRequestToMerge(provider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber, createdPR.Url)
 }
