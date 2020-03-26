@@ -73,7 +73,7 @@ func ChatOpsTests() bool {
 		Describe("Create a quickstart", func() {
 			Context(fmt.Sprintf("by running jx create quickstart %s", lhQuickstart), func() {
 				It("creates a new source repository", func() {
-					args := []string{"create", "quickstart", "-b", "--org", T.GetGitOrganisation(), "-p", T.ApplicationName, "-f", lhQuickstart}
+					args := []string{"create", "spring", "-b", "--org", T.GetGitOrganisation(), "--artifact", T.ApplicationName, "--name", T.ApplicationName, "-d", "web", "-d", "actuator"}
 
 					gitProviderUrl, err := T.GitProviderURL()
 					Expect(err).NotTo(HaveOccurred())
