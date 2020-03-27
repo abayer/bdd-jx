@@ -39,16 +39,21 @@ var _ = ChatOpsTests()
 func ChatOpsTests() bool {
 	return Describe("Lighthouse ChatOps", func() {
 		var (
-			T                helpers.TestOptions
-			err              error
-			provider         gits.GitProvider
-			approverProvider gits.GitProvider
+			T                 helpers.TestOptions
+			err               error
+			commenterProvider gits.GitProvider
+			approverProvider  gits.GitProvider
+			defaultProvider   gits.GitProvider
 		)
 
 		BeforeEach(func() {
-			provider, err = T.GetGitProvider()
+			defaultProvider, err = T.GetGitProvider()
 			Expect(err).ShouldNot(HaveOccurred())
-			Expect(provider).ShouldNot(BeNil())
+			Expect(defaultProvider).ShouldNot(BeNil())
+
+			commenterProvider, err = T.GetCommenterGitProvider()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(commenterProvider).ShouldNot(BeNil())
 
 			approverProvider, err = T.GetApproverGitProvider()
 			Expect(err).ShouldNot(HaveOccurred())
@@ -92,9 +97,15 @@ func ChatOpsTests() bool {
 							fileName := "OWNERS"
 							owners := filepath.Join(workDir, fileName)
 
-							data := []byte(fmt.Sprintf("approvers:\n- %s\n- %s\nreviewers:\n- %s\n- %s\n",
-								provider.UserAuth().Username, helpers.PullRequestApproverUsername,
-								provider.UserAuth().Username, helpers.PullRequestApproverUsername))
+							approvers := []string{
+								fmt.Sprintf("- %s", defaultProvider.UserAuth().Username),
+								fmt.Sprintf("- %s", helpers.PullRequestApproverUsername),
+							}
+							if helpers.PullRequestCreatorUsername != "" {
+								approvers = append(approvers, fmt.Sprintf("- %s", helpers.PullRequestCreatorUsername))
+							}
+							data := []byte(fmt.Sprintf("approvers:\n%s\nreviewers:\n%s\n",
+								strings.Join(approvers, "\n"), strings.Join(approvers, "\n")))
 							err := ioutil.WriteFile(owners, data, util.DefaultWritePermissions)
 							if err != nil {
 								panic(err)
@@ -103,15 +114,15 @@ func ChatOpsTests() bool {
 							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
 						})
 
-						ownersPR, err := T.GetPullRequestByNumber(provider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber)
+						ownersPR, err := T.GetPullRequestByNumber(defaultProvider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber)
 						Expect(err).NotTo(HaveOccurred())
 						Expect(ownersPR).ShouldNot(BeNil())
 
 						By("merging the OWNERS PR")
-						err = provider.MergePullRequest(ownersPR, "PR merge")
+						err = defaultProvider.MergePullRequest(ownersPR, "PR merge")
 						Expect(err).ShouldNot(HaveOccurred())
 
-						T.WaitForPullRequestToMerge(provider, ownersPR.Owner, ownersPR.Repo, *ownersPR.Number, ownersPR.URL)
+						T.WaitForPullRequestToMerge(defaultProvider, ownersPR.Owner, ownersPR.Repo, *ownersPR.Number, ownersPR.URL)
 					})
 
 					prTitle := "My First PR commit"
@@ -131,30 +142,30 @@ func ChatOpsTests() bool {
 							T.ExpectCommandExecution(workDir, time.Minute, 0, "git", "add", fileName)
 						})
 
-						pr, err = T.GetPullRequestByNumber(provider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber)
+						pr, err = T.GetPullRequestByNumber(defaultProvider, createdPR.Owner, createdPR.Repository, createdPR.PullRequestNumber)
 						Expect(err).NotTo(HaveOccurred())
 						Expect(pr).ShouldNot(BeNil())
 
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "failure", []string{defaultContext})
 					})
 
 					By("attempting to LGTM our own PR", func() {
-						err = T.AttemptToLGTMOwnPullRequest(provider, pr)
+						err = T.AttemptToLGTMOwnPullRequest(defaultProvider, pr)
 						Expect(err).NotTo(HaveOccurred())
 					})
 
 					By("adding a hold label", func() {
-						err = T.AddHoldLabelToPullRequestWithChatOpsCommand(provider, pr)
+						err = T.AddHoldLabelToPullRequestWithChatOpsCommand(commenterProvider, pr)
 						Expect(err).NotTo(HaveOccurred())
 					})
 
 					By("adding a WIP label", func() {
-						err = T.AddWIPLabelToPullRequestByUpdatingTitle(provider, pr)
+						err = T.AddWIPLabelToPullRequestByUpdatingTitle(commenterProvider, pr)
 						Expect(err).NotTo(HaveOccurred())
 					})
 
 					By("approving pull request", func() {
-						err = T.ApprovePullRequest(provider, approverProvider, pr)
+						err = T.ApprovePullRequest(commenterProvider, approverProvider, pr)
 						Expect(err).ShouldNot(HaveOccurred())
 					})
 
@@ -165,10 +176,10 @@ func ChatOpsTests() bool {
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a pending status, meaning we've got a new build
-						T.WaitForPullRequestCommitStatus(provider, pr, "pending", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "pending", []string{defaultContext})
 
 						// Wait until we see the build fail.
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "failure", []string{defaultContext})
 					})
 
 					By("'/test this' with it failing again", func() {
@@ -176,22 +187,22 @@ func ChatOpsTests() bool {
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a pending status, meaning we've got a new build
-						T.WaitForPullRequestCommitStatus(provider, pr, "pending", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "pending", []string{defaultContext})
 
 						// Wait until we see the build fail.
-						T.WaitForPullRequestCommitStatus(provider, pr, "failure", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "failure", []string{defaultContext})
 					})
 
 					// '/override' has to be done by a repo admin, so use the bot user.
 
 					By("override failed context, see status as success, wait for it to merge", func() {
-						err = provider.AddPRComment(pr, fmt.Sprintf("/override %s", defaultContext))
+						err = commenterProvider.AddPRComment(pr, fmt.Sprintf("/override %s", defaultContext))
 						Expect(err).ShouldNot(HaveOccurred())
 
 						// Wait until we see a success status
-						T.WaitForPullRequestCommitStatus(provider, pr, "success", []string{defaultContext})
+						T.WaitForPullRequestCommitStatus(defaultProvider, pr, "success", []string{defaultContext})
 
-						T.WaitForPullRequestToMerge(provider, pr.Owner, pr.Repo, *pr.Number, pr.URL)
+						T.WaitForPullRequestToMerge(defaultProvider, pr.Owner, pr.Repo, *pr.Number, pr.URL)
 					})
 
 					// TODO: Later: add multiple contexts, one more required, one more optional
@@ -203,7 +214,7 @@ func ChatOpsTests() bool {
 							Title: "Test the /assign command",
 							Body:  "This tests assigning a user using a ChatOps command",
 						}
-						err = T.CreateIssueAndAssignToUserWithChatOpsCommand(issue, provider)
+						err = T.CreateIssueAndAssignToUserWithChatOpsCommand(issue, commenterProvider)
 						Expect(err).NotTo(HaveOccurred())
 					})
 

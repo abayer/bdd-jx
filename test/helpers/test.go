@@ -46,6 +46,10 @@ const (
 	BDDPullRequestApproverUsernameEnvVar = "BDD_APPROVER_USERNAME"
 	// BDDPullRequestApproverTokenEnvVar is the environment variable that we look at for the token for the approver in some tests.
 	BDDPullRequestApproverTokenEnvVar = "BDD_APPROVER_ACCESS_TOKEN"
+	// BDDPullRequestCreatorUsernameEnvVar is the environment variable that we look at for the username for the PR creator in some tests
+	BDDPullRequestCreatorUsernameEnvVar = "BDD_CREATOR_USERNAME"
+	// BDDPullRequestApproverTokenEnvVar is the environment variable that we look at for the token for the approver in some tests.
+	BDDPullRequestCreatorTokenEnvVar = "BDD_CREATOR_ACCESS_TOKEN"
 )
 
 var (
@@ -97,6 +101,12 @@ var (
 	// PullRequestApproverToken is the access token used by the PullRequestApproverUsername user.
 	PullRequestApproverToken = utils.GetEnv(BDDPullRequestApproverTokenEnvVar, "")
 
+	// PullRequestCreatorUsername is the username used for creating PRs and repos, overriding the default user.
+	PullRequestCreatorUsername = utils.GetEnv(BDDPullRequestCreatorUsernameEnvVar, "")
+
+	// PullRequestCreatorToken is the access token used by the PullRequestCreatorUsername user.
+	PullRequestCreatorToken = utils.GetEnv(BDDPullRequestCreatorTokenEnvVar, "")
+
 	// ForceLocalAuthConfig when enabled, the tests will only use the local auth config
 	ForceLocalAuthConfig = utils.GetEnv("BDD_FORCE_LOCAL_AUTH_CONFIG", "false")
 )
@@ -140,6 +150,27 @@ func (t *TestOptions) GetGitOrganisation() string {
 func (t *TestOptions) GetGitProvider() (gits.GitProvider, error) {
 	return t.getGitProviderWithUserFunc(func(service auth.ConfigService, config *auth.AuthConfig, server *auth.AuthServer) (*auth.UserAuth, error) {
 		return config.CurrentUser(server, false), nil
+	})
+}
+
+// GetCommenterGitProvider returns a git provider that uses distinct credentials specified for commenter/creator if specified, and
+// otherwise uses default credentials stored in the jx-auth-configmap or in ~/.jx/gitAuth.yaml
+func (t *TestOptions) GetCommenterGitProvider() (gits.GitProvider, error) {
+	if PullRequestCreatorUsername == "" || PullRequestCreatorToken == "" {
+		return t.GetGitProvider()
+	}
+	return t.getGitProviderWithUserFunc(func(service auth.ConfigService, config *auth.AuthConfig, server *auth.AuthServer) (*auth.UserAuth, error) {
+		userAuth := config.FindUserAuth(server.URL, PullRequestCreatorUsername)
+		if userAuth == nil {
+			userAuth = config.GetOrCreateUserAuth(server.URL, PullRequestCreatorUsername)
+			userAuth.ApiToken = PullRequestCreatorToken
+			userAuth.Password = PullRequestCreatorToken
+			err := service.SaveConfig()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return userAuth, nil
 	})
 }
 
