@@ -1308,8 +1308,10 @@ func (t *TestOptions) ExpectThatPullRequestMatches(provider gits.GitProvider, pu
 	f := func() error {
 		pullRequest, err := lhClient.GetPullRequest(owner, repo, pullRequestNumber)
 		if err != nil {
+			utils.LogInfof("GOT AN ERR ON THE PR: %v", err)
 			return err
 		}
+		utils.LogInfof("PR: %v", pullRequest)
 		return matchFunc(pullRequest)
 	}
 
