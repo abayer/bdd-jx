@@ -16,13 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-github/v28/github"
 	v1 "github.com/jenkins-x/jx-api/pkg/apis/jenkins.io/v1"
 	"github.com/jenkins-x/jx/v2/pkg/auth"
 	cmd "github.com/jenkins-x/jx/v2/pkg/cmd/clients"
 	"github.com/jenkins-x/jx/v2/pkg/gits"
 	"github.com/jenkins-x/lighthouse/pkg/scmprovider"
-	"golang.org/x/oauth2"
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/cenkalti/backoff"
@@ -281,18 +279,6 @@ func (t *TestOptions) GitProviderURL() (string, error) {
 	}
 
 	return gitServers[0].Url, nil
-}
-
-func (t *TestOptions) GitHubClient() *github.Client {
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: t.GitHubToken()},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-
-	client := github.NewClient(tc)
-	Expect(client).ShouldNot(BeNil())
-	return client
 }
 
 // GitHubToken returns the GitHub token for the pipeline user.
@@ -707,7 +693,9 @@ func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, appro
 	if err != nil {
 		return err
 	}
+	utils.LogInfof("invites: %v", invites)
 	for _, x := range invites {
+		utils.LogInfof("- accepting %v", x)
 		// Accept all invitations for the pipeline user
 		_, err = approverProvider.AcceptInvitation(*x.ID)
 		if err != nil {

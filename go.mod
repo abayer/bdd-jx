@@ -3,7 +3,6 @@ module github.com/jenkins-x/bdd-jx
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/fatih/color v1.9.0
-	github.com/google/go-github/v28 v28.1.1
 	github.com/jenkins-x/go-scm v1.5.143
 	github.com/jenkins-x/golang-jenkins v0.0.0-20180919102630-65b83ad42314
 	github.com/jenkins-x/jx-api v0.0.13
@@ -13,7 +12,6 @@ require (
 	github.com/onsi/gomega v1.7.0
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.6.1
-	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	k8s.io/api v0.17.2
 	k8s.io/apimachinery v0.17.2
 	k8s.io/client-go v11.0.1-0.20190805182717-6502b5e7b1b5+incompatible
@@ -47,5 +45,7 @@ replace github.com/TV4/logrus-stackdriver-formatter => github.com/jenkins-x/logr
 replace k8s.io/test-infra => github.com/jenkins-x/test-infra v0.0.0-20200611142252-211a92405c22
 
 replace gomodules.xyz/jsonpatch/v2 => gomodules.xyz/jsonpatch/v2 v2.0.1
+
+replace github.com/jenkins-x/jx/v2 => github.com/abayer/jx/v2 v2.0.0-20200710173437-832b1cc21aeb
 
 go 1.13
