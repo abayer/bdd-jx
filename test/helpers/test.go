@@ -685,17 +685,19 @@ func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, appro
 		}
 		return err
 	}
-	// If the provider is BitBucket Server, just return
-	if provider.IsBitbucketServer() {
+	// If the provider is not GitHub, just return
+	if !provider.IsGitHub() {
 		return nil
 	}
+	// Sleep a few seconds since the invitation doesn't seem to always show up promptly.
+	time.Sleep(15 * time.Second)
 	invites, _, err := approverProvider.ListInvitations()
 	if err != nil {
 		return err
 	}
-	utils.LogInfof("invites: %v", invites)
+	utils.LogInfof("invites: %v\n", invites)
 	for _, x := range invites {
-		utils.LogInfof("- accepting %v", x)
+		utils.LogInfof("- accepting %v\n", x)
 		// Accept all invitations for the pipeline user
 		_, err = approverProvider.AcceptInvitation(*x.ID)
 		if err != nil {
