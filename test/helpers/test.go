@@ -685,8 +685,8 @@ func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, appro
 		}
 		return err
 	}
-	// If the provider is not GitHub, just return
-	if !provider.IsGitHub() {
+	// If the provider is BBS, just return
+	if provider.IsBitbucketServer() {
 		return nil
 	}
 	// Sleep a few seconds since the invitation doesn't seem to always show up promptly.
@@ -695,9 +695,7 @@ func (t *TestOptions) AddApproverAsCollaborator(provider gits.GitProvider, appro
 	if err != nil {
 		return err
 	}
-	utils.LogInfof("invites: %v\n", invites)
 	for _, x := range invites {
-		utils.LogInfof("- accepting %v\n", x)
 		// Accept all invitations for the pipeline user
 		_, err = approverProvider.AcceptInvitation(*x.ID)
 		if err != nil {
@@ -1109,6 +1107,7 @@ func (t *TestOptions) ApprovePullRequest(defaultProvider gits.GitProvider, appro
 	if approverProvider.Kind() == "gitlab" {
 		cmd = "lh-" + cmd
 	}
+	utils.LogInfof("adding /%s as %s to %s", cmd, approverProvider.UserAuth().Username, pullRequest.URL)
 	err = approverProvider.AddPRComment(pullRequest, fmt.Sprintf("/%s", cmd))
 	if err != nil {
 		return err
